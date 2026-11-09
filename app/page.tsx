@@ -343,7 +343,7 @@ export default function Home() {
     } else if (!activeIdRef.current && mapped.length) {
       setActiveId(mapped[0].id);
     }
- : any = supabase;
+ const sb: any = supabase;
     if (!sb) return;
 
     const { data: memberRows, error } = await sb
