@@ -343,7 +343,10 @@ export default function Home() {
     } else if (!activeIdRef.current && mapped.length) {
       setActiveId(mapped[0].id);
     }
- const sb: any = supabase;
+  }
+
+  async function loadGroupMembers(chatId: string) {
+    const sb: any = supabase;
     if (!sb) return;
 
     const { data: memberRows, error } = await sb
@@ -413,7 +416,9 @@ export default function Home() {
       return;
     }
 
-    setGroupInfoName(data?.GroupInfoAvatar(data?.avatar_url || "");
+    setGroupInfoName(data?.name || "");
+    setGroupInfoDescription(data?.description || "");
+    setGroupInfoAvatar(data?.avatar_url || "");
     setMemberSearch("");
     setMemberSearchResults([]);
 
@@ -467,7 +472,7 @@ export default function Home() {
     if (!sb || !activeId) return;
 
     const { error } = await sb.rpc("remove_group_member", {
- activeId,
+      p_chat_id: activeId,
       p_user_id: memberId,
     });
 
@@ -1789,7 +1794,7 @@ export default function Home() {
               />
 
               <label style={{ fontSize: 13, opacity: 0.7 }}>Email</label>
-              <div style={{ padding: 103" }}>
+              <div style={{ padding: "10px 0" }}>
                 {user.email}
               </div>
 
@@ -1899,10 +1904,7 @@ export default function Home() {
                 Direct
               </button>
 
-              <button
-                onClick={() => setNewMode("group")}
-                style={{
-                  flex: 1,
+              1,
                   padding: 8,
                   borderRadius: 8,
                   border: "1px solid #ccc",
@@ -2000,7 +2002,7 @@ export default function Home() {
             </div>
 
             {newMode === "group" && (
-              <div style={{ padding: 12, borderTop: "1px solid #e5e5e5" }}>
+              borderTop: "1px solid #e5e5e5" }}>
                 <button
                   onClick={createGroup}
                   style={{
