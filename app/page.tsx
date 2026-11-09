@@ -4,12 +4,24 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   Search, MessageSquarePlus, MoreVertical, Paperclip, Smile, Send,
-  CheckCheck, Phone, Video, ArrowLeft, LogOut, UserRound, Users, X
+  Check, CheckCheck, Phone, Video, ArrowLeft, LogOut, UserRound, Users, X,
+  Mic, Trash2, Settings as SettingsIcon
 } from "lucide-react";
 
 type Profile = { id: string; username: string | null; full_name: string | null; avatar_url: string | null; };
 type Chat = { id: string; title: string; subtitle: string; avatar: string; time: string; unread: number; isGroup: boolean; updatedAt: string; };
-type Message = { id: string; chat_id: string; sender_id: string; content: string; created_at: string; };
+type Message = {
+  id: string; chat_id: string; sender_id: string; content: string; created_at: string;
+  delivered_at?: string | null; read_at?: string | null;
+  type?: string | null; audio_path?: string | null; audio_duration?: number | null;
+};
+
+const EMOJIS = [
+  "😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","😉","😍","🥰","😘","😋",
+  "😎","🤩","🥳","😏","😒","😞","😔","😢","😭","😤","😡","🤯","😱","😴","🤔","🙄",
+  "👍","👎","👏","🙌","🙏","💪","👌","✌️","🤝","👋","❤️","🧡","💛","💚","💙","💜",
+  "🖤","💔","🔥","✨","🎉","🎂","🌹","⭐","💯","✅","❌","🎵","📞","📷","🍕","☕"
+];
 
 function formatTime(iso?: string) {
   if (!iso) return "";
@@ -18,6 +30,38 @@ function formatTime(iso?: string) {
   return d.toDateString() === now.toDateString()
     ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : d.toLocaleDateString();
+}
+
+function fmtSecs(s: number) {
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function Ticks({ m }: { m: Message }) {
+  if (m.read_at) return <CheckCheck size={15} color="#53bdeb" />;
+  if (m.delivered_at) return <CheckCheck size={15} color="#8696a0" />;
+  return <Check size={15} color="#8696a0" />;
+}
+
+function VoiceMessage({ path, duration }: { path: string; duration?: number | null }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const sb: any = supabase;
+    if (!sb) return;
+    let alive = true;
+    sb.storage.from("voice").createSignedUrl(path, 3600).then(({ data }: any) => {
+      if (alive && data?.signedUrl) setUrl(data.signedUrl);
+    });
+    return () => { alive = false; };
+  }, [path]);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 220 }}>
+      {url
+        ? <audio controls preload="metadata" src={url} style={{ height: 36, maxWidth: 240 }} />
+        : <span style={{ opacity: 0.7, fontSize: 13 }}>Loading voice message…</span>}
+      {duration ? <small>{fmtSecs(duration)}</small> : null}
+    </div>
+  );
 }
 
 export default function Home() {
@@ -45,14 +89,28 @@ export default function Home() {
   const [groupName, setGroupName] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
 
+  // emoji + settings + voice
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [recording, setRecording] = useState(false);
+  const [recSecs, setRecSecs] = useState(0);
+
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const activeIdRef = useRef<string | null>(null);
   const chatsRef = useRef<Chat[]>([]);
   const namesRef = useRef<Record<string, string>>({});
+  const mrRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const recStartRef = useRef(0);
+  const timerRef = useRef<any>(null);
+  const cancelRef = useRef(false);
 
   useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
   useEffect(() => { chatsRef.current = chats; }, [chats]);
   useEffect(() => { namesRef.current = names; }, [names]);
+  useEffect(() => () => { clearInterval(timerRef.current); }, []);
 
   // ---------- Auth ----------
   useEffect(() => {
@@ -74,6 +132,18 @@ export default function Home() {
       setNames(prev => ({ ...prev, ...out }));
     }
     return { ...namesRef.current, ...out };
+  }
+
+  // ---------- Receipts helpers ----------
+  function markDelivered() {
+    const sb: any = supabase;
+    if (!sb) return;
+    sb.rpc("mark_messages_delivered").then(() => {}, () => {});
+  }
+  function markRead(chatId: string) {
+    const sb: any = supabase;
+    if (!sb) return;
+    sb.rpc("mark_messages_read", { p_chat_id: chatId }).then(() => {}, () => {});
   }
 
   async function loadChats(selectId?: string) {
@@ -112,13 +182,16 @@ export default function Home() {
     setChats(mapped);
     if (selectId) { setActiveId(selectId); setMobileChat(true); }
     else if (!activeIdRef.current && mapped.length) setActiveId(mapped[0].id);
-    }  // ---------- Profile + chats after login ----------
+  }
+
+  // ---------- Profile + chats after login ----------
   useEffect(() => {
     const sb: any = supabase;
     if (!sb || !user) { setChats([]); setActiveId(null); setMessages([]); return; }
     sb.from("profiles").select("*").eq("id", user.id).single()
       .then(({ data }: any) => { if (data) setProfile(data as Profile); });
     loadChats();
+    markDelivered();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -129,18 +202,26 @@ export default function Home() {
     const channel = sb.channel("messages-all")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload: any) => {
         const m = payload.new as Message;
+        const mine = m.sender_id === user.id;
         if (m.chat_id === activeIdRef.current) {
           setMessages(prev => prev.some(x => x.id === m.id) ? prev : [...prev, m]);
           fetchNames([m.sender_id]);
+          if (!mine) markRead(m.chat_id);
         } else if (!chatsRef.current.some(c => c.id === m.chat_id)) {
+          if (!mine) markDelivered();
           loadChats();
           return;
-        } else if (m.sender_id !== user.id) {
+        } else if (!mine) {
+          markDelivered();
           setChats(prev => prev.map(c => c.id === m.chat_id ? { ...c, unread: c.unread + 1 } : c));
         }
         setChats(prev => prev
           .map(c => c.id === m.chat_id ? { ...c, updatedAt: m.created_at, time: formatTime(m.created_at) } : c)
           .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages" }, (payload: any) => {
+        const m = payload.new as Message;
+        setMessages(prev => prev.map(x => x.id === m.id ? { ...x, ...m } : x));
       })
       .subscribe();
     return () => { sb.removeChannel(channel); };
@@ -168,6 +249,7 @@ export default function Home() {
         }
       });
     setChats(prev => prev.map(c => c.id === activeId ? { ...c, unread: 0 } : c));
+    markRead(activeId);
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, user]);
@@ -227,15 +309,100 @@ export default function Home() {
     const sb: any = supabase;
     const content = draft.trim();
     if (!sb || !user || !activeId || !content) return;
-    setNotice(""); setDraft("");
+    setNotice(""); setDraft(""); setShowEmoji(false);
     const { data, error } = await sb.from("messages")
       .insert({ chat_id: activeId, sender_id: user.id, content }).select().single();
     if (error) { setNotice(error.message); setDraft(content); return; }
     if (data) setMessages(prev => prev.some(x => x.id === (data as Message).id) ? prev : [...prev, data as Message]);
   }
 
+  // ---------- Voice messages ----------
+  async function sendVoice(blob: Blob, duration: number) {
+    const sb: any = supabase;
+    const chatId = activeIdRef.current;
+    if (!sb || !user || !chatId) return;
+    const ext = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
+    const path = `${chatId}/${crypto.randomUUID()}.${ext}`;
+    const up = await sb.storage.from("voice").upload(path, blob, { contentType: blob.type });
+    if (up.error) { setNotice(up.error.message); return; }
+    const { data, error } = await sb.from("messages")
+      .insert({
+        chat_id: chatId, sender_id: user.id, content: "🎤 Voice message",
+        type: "voice", audio_path: path, audio_duration: duration
+      }).select().single();
+    if (error) { setNotice(error.message); return; }
+    if (data) setMessages(prev => prev.some(x => x.id === (data as Message).id) ? prev : [...prev, data as Message]);
+  }
+
+  async function startRecording() {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setNotice("Voice recording is not supported in this browser."); return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      chunksRef.current = []; cancelRef.current = false;
+      mr.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        clearInterval(timerRef.current);
+        setRecording(false); setRecSecs(0);
+        if (cancelRef.current) return;
+        const type = (mr.mimeType || "audio/webm").split(";")[0];
+        const blob = new Blob(chunksRef.current, { type });
+        const duration = Math.max(1, Math.round((Date.now() - recStartRef.current) / 1000));
+        await sendVoice(blob, duration);
+      };
+      mr.start();
+      mrRef.current = mr;
+      recStartRef.current = Date.now();
+      setShowEmoji(false); setRecording(true); setRecSecs(0);
+      timerRef.current = setInterval(
+        () => setRecSecs(Math.round((Date.now() - recStartRef.current) / 1000)), 500);
+    } catch {
+      setNotice("Microphone access was denied. Allow it in your browser settings.");
+    }
+  }
+
+  function stopRecording(send: boolean) {
+    cancelRef.current = !send;
+    if (mrRef.current && mrRef.current.state !== "inactive") mrRef.current.stop();
+  }
+
+  // ---------- Emoji ----------
+  function addEmoji(emoji: string) {
+    const el = inputRef.current;
+    if (el && el.selectionStart != null) {
+      const s = el.selectionStart, e = el.selectionEnd ?? s;
+      const next = draft.slice(0, s) + emoji + draft.slice(e);
+      setDraft(next);
+      requestAnimationFrame(() => { el.focus(); el.setSelectionRange(s + emoji.length, s + emoji.length); });
+    } else {
+      setDraft(d => d + emoji);
+    }
+  }
+
+  // ---------- Settings ----------
+  function openSettings() {
+    setNameDraft(profile?.full_name || "");
+    setShowSettings(true);
+  }
+
+  async function saveSettings() {
+    const sb: any = supabase;
+    const name = nameDraft.trim();
+    if (!sb || !user) return;
+    if (!name) { setNotice("Name can't be empty."); return; }
+    const { error } = await sb.from("profiles").update({ full_name: name }).eq("id", user.id);
+    if (error) { setNotice(error.message); return; }
+    setProfile(p => p ? { ...p, full_name: name } : p);
+    setNames(prev => ({ ...prev, [user.id]: name }));
+    setShowSettings(false);
+  }
+
   async function signOut() {
     await supabase?.auth.signOut();
+    setShowSettings(false);
     setUser(null); setProfile(null); setChats([]); setActiveId(null); setMessages([]); setMobileChat(false);
   }
 
@@ -275,6 +442,8 @@ export default function Home() {
     </main>
   );
 
+  const hasText = draft.trim().length > 0;
+
   return (
     <main className="app-shell">
       <aside className={`sidebar ${mobileChat ? "hide-mobile" : ""}`}>
@@ -282,6 +451,7 @@ export default function Home() {
           <div className="brand"><span className="brand-mark small">w</span><span>Whatsup</span></div>
           <div className="header-actions">
             <button title="New chat" onClick={() => setShowNew(true)}><MessageSquarePlus /></button>
+            <button title="Settings" onClick={openSettings}><SettingsIcon /></button>
           </div>
         </header>
         <div className="search-wrap"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search chats" /></div>
@@ -312,7 +482,7 @@ export default function Home() {
             <div className="contact"><strong>{active.title}</strong><small>{active.isGroup ? "Group chat" : "Direct message"}</small></div>
             <div className="header-actions"><button title="Video call"><Video /></button><button title="Voice call"><Phone /></button><button title="More"><MoreVertical /></button></div>
           </header>
-          <div className="messages-area">
+          <div className="messages-area" onClick={() => showEmoji && setShowEmoji(false)}>
             <div className="encryption"><span>🔒</span> Messages are stored securely and visible only to chat members. Not end-to-end encrypted.</div>
             {messages.length === 0 && <div className="empty-state"><div className="empty-icon">✉</div><h2>Say hello!</h2><p>Your conversation starts here.</p></div>}
             {messages.map(m => {
@@ -320,21 +490,82 @@ export default function Home() {
               return (
                 <div key={m.id} className={`message ${out ? "outgoing" : "incoming"}`}>
                   {active.isGroup && !out && <strong style={{ display: "block", fontSize: 12, opacity: 0.8 }}>{names[m.sender_id] || ""}</strong>}
-                  <div>{m.content}</div>
-                  <small>{new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {out ? <CheckCheck size={14} /> : null}</small>
+                  {m.type === "voice" && m.audio_path
+                    ? <VoiceMessage path={m.audio_path} duration={m.audio_duration} />
+                    : <div>{m.content}</div>}
+                  <small style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    {out ? <Ticks m={m} /> : null}
+                  </small>
                 </div>
               );
             })}
             <div ref={bottomRef} />
           </div>
-          <form className="composer" onSubmit={sendMessage}>
-            <button type="button" title="Emoji"><Smile /></button><button type="button" title="Attach file"><Paperclip /></button>
-            <input value={draft} onChange={e => setDraft(e.target.value)} placeholder="Type a message" />
-            <button className="send-button" type="submit" title="Send"><Send size={19} /></button>
-          </form>
+
+          {showEmoji && (
+            <div style={{
+              display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 4, padding: 10,
+              background: "#fff", color: "#111", borderTop: "1px solid #e5e5e5",
+              maxHeight: 190, overflowY: "auto"
+            }}>
+              {EMOJIS.map(em => (
+                <button key={em} type="button" onClick={() => addEmoji(em)}
+                  style={{ fontSize: 24, background: "none", border: 0, cursor: "pointer", padding: 4, borderRadius: 8 }}>
+                  {em}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {recording ? (
+            <div className="composer" style={{ alignItems: "center", gap: 12 }}>
+              <button type="button" title="Cancel" onClick={() => stopRecording(false)}><Trash2 /></button>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#ef4444" }} />
+                <span>Recording… {fmtSecs(recSecs)}</span>
+              </div>
+              <button className="send-button" type="button" title="Send voice message" onClick={() => stopRecording(true)}><Send size={19} /></button>
+            </div>
+          ) : (
+            <form className="composer" onSubmit={sendMessage}>
+              <button type="button" title="Emoji" onClick={() => setShowEmoji(v => !v)}><Smile /></button>
+              <button type="button" title="Attach file"><Paperclip /></button>
+              <input ref={inputRef} value={draft} onChange={e => setDraft(e.target.value)} onFocus={() => setShowEmoji(false)} placeholder="Type a message" />
+              {hasText
+                ? <button className="send-button" type="submit" title="Send"><Send size={19} /></button>
+                : <button className="send-button" type="button" title="Record voice message" onClick={startRecording}><Mic size={19} /></button>}
+            </form>
+          )}
         </>)}
         {notice && <div className="notice floating" onClick={() => setNotice("")}>{notice}</div>}
       </section>
+
+      {showSettings && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }} onClick={() => setShowSettings(false)}>
+          <div style={{ background: "#fff", color: "#111", borderRadius: 14, width: "100%", maxWidth: 420, overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid #e5e5e5" }}>
+              <strong>Settings</strong>
+              <button onClick={() => setShowSettings(false)} style={{ background: "none", border: 0, cursor: "pointer", color: "#111" }}><X size={20} /></button>
+            </div>
+            <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+              <label style={{ fontSize: 13, opacity: 0.7 }}>Display name</label>
+              <input value={nameDraft} onChange={e => setNameDraft(e.target.value)} placeholder="Your name"
+                style={{ padding: 10, borderRadius: 8, border: "1px solid #ccc", color: "#111", background: "#fff" }} />
+              <label style={{ fontSize: 13, opacity: 0.7 }}>Email</label>
+              <div style={{ padding: 10, borderRadius: 8, background: "#f3f3f3" }}>{user.email}</div>
+              <button onClick={saveSettings}
+                style={{ padding: 10, borderRadius: 8, border: 0, background: "#25d366", color: "#fff", fontWeight: 600, cursor: "pointer", marginTop: 6 }}>
+                Save changes
+              </button>
+              <button onClick={signOut}
+                style={{ padding: 10, borderRadius: 8, border: "1px solid #ccc", background: "#fff", color: "#c0392b", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <LogOut size={16} /> Log out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showNew && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }} onClick={closeNew}>
@@ -375,4 +606,4 @@ export default function Home() {
       )}
     </main>
   );
-      }
+  }
