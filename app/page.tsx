@@ -74,7 +74,7 @@ export default function Home() {
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `chat_id=eq.${active.id}` },
         (payload) => setMessages(prev => [...prev, payload.new as Message]))
       .subscribe();
-    return () => { alive = false; supabase.removeChannel(channel); };
+    return () => { alive = false; supabase?.removeChannel(channel); };
   }, [active.id, user]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
