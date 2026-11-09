@@ -56,36 +56,19 @@ export default function Home() {
 
   // ---------- Auth ----------
   useEffect(() => {
-    const sb = supabase;
+    const sb: any = supabase;
     if (!sb) { setAuthReady(true); return; }
-    sb.auth.getSession().then(({ data }) => { setUser(data.session?.user ?? null); setAuthReady(true); });
-    const { data: listener } = sb.auth.onAuthStateChange((_e, session) => setUser(session?.user ?? null));
+    sb.auth.getSession().then(({ data }: any) => { setUser(data.session?.user ?? null); setAuthReady(true); });
+    const { data: listener } = sb.auth.onAuthStateChange((_e: any, session: any) => setUser(session?.user ?? null));
     return () => listener.subscription.unsubscribe();
   }, []);
 
   async function fetchNames(ids: string[]): Promise<Record<string, string>> {
-    const sb = supabase;
+    const sb: any = supabase;
     const out: Record<string, string> = {};
     if (!sb) return out;
     const need = Array.from(new Set(ids)).filter(id => id && !namesRef.current[id]);
     if (need.length) {
       const { data } = await sb.from("profiles").select("id, username, full_name").in("id", need);
-      data?.forEach((p: any) => { out[p.id] = p.full_name || p.username || "User"; });
-      setNames(prev => ({ ...prev, ...out }));
-    }
-    return { ...namesRef.current, ...out };
-  }
-
-  async function loadChats(selectId?: string) {
-    const sb = supabase;
-    if (!sb || !user) return;
-    const { data, error } = await sb
-      .from("chat_members")
-      .select("chat_id, chats(id, name, is_group, updated_at)")
-      .eq("user_id", user.id);
-    if (error) { setNotice(error.message); return; }
-
-    const list: any[] = (data || []).map((r: any) => r.chats).filter(Boolean);
-    const directIds = list.filter(c => !c.is_group).map(c => c.id);
-    const otherByChat: Record<string, string> = {};
-    let nm: Record
+      (data || []).forEach((p: any) => { out[p.id] = p.full_name || p.username || "User"; });
+      setNames(prev => ({
