@@ -1889,54 +1889,59 @@ export default function Home() {
             </div>
 
             <div style={{ display: "flex", gap: 8, padding: "10px 16px" }}>
-              <button
-                onClick={() => setNewMode("direct")}
-                style={{
-                  flex: 1,
-                  padding: 8,
-                  borderRadius: 8,
-                  border: "1px solid #ccc",
-                  cursor: "pointer",
-                  background: newMode === "direct" ? "#d9fdd3" : "#fff",
-                  color: "#111",
-                }}
-              >
-                Direct
-              </button>
+  <button
+    type="button"
+    onClick={() => setNewMode("direct")}
+    style={{
+      flex: 1,
+      padding: 8,
+      borderRadius: 8,
+      border: "1px solid #ccc",
+      cursor: "pointer",
+      background: newMode === "direct" ? "#d9fdd3" : "#fff",
+      color: "#111",
+    }}
+  >
+    Direct
+  </button>
 
-              1,
-                  padding: 8,
-                  borderRadius: 8,
-                  border: "1px solid #ccc",
-                  cursor: "pointer",
-                  background: newMode === "group" ? "#d9fdd3" : "#fff",
-                  color: "#111",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 6,
-                }}
-              >
-                <Users size={16} />
-                Group
-              </button>
-            </div>
+  <button
+    type="button"
+    onClick={() => setNewMode("group")}
+    style={{
+      flex: 1,
+      padding: 8,
+      borderRadius: 8,
+      border: "1px solid #ccc",
+      cursor: "pointer",
+      background: newMode === "group" ? "#d9fdd3" : "#fff",
+      color: "#111",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+    }}
+  >
+    <Users size={16} />
+    Group
+  </button>
+</div>
 
-            {newMode === "group" && (
-              <input
-                value={groupName}
-                onChange={e => setGroupName(e.target.value)}
-                placeholder="Group name"
-                style={{
-                  margin: "0 16px 8px",
-                  padding: 10,
-                  borderRadius: 8,
-                  border: "1px solid #ccc",
-                  color: "#111",
-                  background: "#fff",
-                }}
-              />
-            )}
+{newMode === "group" && (
+  <input
+    value={groupName}
+    onChange={e => setGroupName(e.target.value)}
+    placeholder="Group name"
+    style={{
+      margin: "0 16px 8px",
+      padding: 10,
+      borderRadius: 8,
+      border: "1px solid #ccc",
+      color: "#111",
+      background: "#fff",
+    }}
+  />
+)}
 
             <input
               value={userQuery}
