@@ -21,6 +21,7 @@ type Chat = {
   subtitle: string;
   avatar: string;
   avatarUrl?: string | null;
+  onlyAdminsSend?: boolean;
   time: string;
   unread: number;
   isGroup: boolean;
@@ -70,9 +71,9 @@ function fmtSecs(s: number) {
   return `${m}:${String(s % 60).padStart(2, "0")}`;
 }
 
-function Ticks({ m }: { m: Message }) {
-  if (m.read_at) return <CheckCheck size={15} color="#53bdeb" />;
-  if (m.delivered_at) return <CheckCheck size={15} color="#8696a0" />;
+function Ticks({ status }: { status: "sent" | "delivered" | "read" }) {
+  if (status === "read") return <CheckCheck size={15} color="#53bdeb" />;
+  if (status === "delivered") return <CheckCheck size={15} color="#8696a0" />;
   return <Check size={15} color="#8696a0" />;
 }
 
@@ -187,6 +188,13 @@ export default function Home() {
   const [groupInfoAvatar, setGroupInfoAvatar] = useState("");
   const [memberSearch, setMemberSearch] = useState("");
   const [memberSearchResults, setMemberSearchResults] = useState<Profile[]>([]);
+  const [groupOnlyAdmins, setGroupOnlyAdmins] = useState(false);
+
+  // Per-person receipts: receipts[messageId][userId] = { delivered_at, read_at }
+  type ReceiptMap = Record<string, Record<string, { delivered_at?: string | null; read_at?: string | null }>>;
+  const [receipts, setReceipts] = useState<ReceiptMap>({});
+  const [chatMembers, setChatMembers] = useState<{ id: string; role: string }[]>([]);
+  const [infoMsgId, setInfoMsgId] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -280,7 +288,7 @@ export default function Home() {
 
     const { data, error } = await sb
       .from("chat_members")
-      .select("chat_id, chats(id, name, is_group, updated_at, avatar_url)")
+      .select("chat_id, chats(id, name, is_group, updated_at, avatar_url, only_admins_send)")
       .eq("user_id", user.id);
 
     if (error) {
@@ -327,6 +335,7 @@ export default function Home() {
         subtitle: c.is_group ? "Group" : "Direct message",
         avatar: (title[0] || "W").toUpperCase(),
         avatarUrl: c.avatar_url || null,
+        onlyAdminsSend: !!c.only_admins_send,
         time: formatTime(c.updated_at),
         unread: prev?.unread || 0,
         updatedAt: c.updated_at || "",
@@ -407,7 +416,7 @@ export default function Home() {
 
     const { data, error } = await sb
       .from("chats")
-      .select("name, description, avatar_url")
+      .select("name, description, avatar_url, only_admins_send")
       .eq("id", activeId)
       .single();
 
@@ -419,6 +428,7 @@ export default function Home() {
     setGroupInfoName(data?.name || "");
     setGroupInfoDescription(data?.description || "");
     setGroupInfoAvatar(data?.avatar_url || "");
+    setGroupOnlyAdmins(!!data?.only_admins_send);
     setMemberSearch("");
     setMemberSearchResults([]);
 
@@ -435,6 +445,7 @@ export default function Home() {
       p_name: groupInfoName.trim(),
       p_description: groupInfoDescription.trim(),
       p_avatar_url: groupInfoAvatar.trim(),
+      p_only_admins_send: groupOnlyAdmins,
     });
 
     if (error) {
@@ -483,6 +494,68 @@ export default function Home() {
 
     await loadGroupMembers(activeId);
     await loadChats(activeId);
+  }
+
+  // Loads who is in the open chat and the receipts for my messages in it.
+  async function loadChatMembersAndReceipts(chatId: string, rows: Message[]) {
+    const sb: any = supabase;
+    if (!sb || !user) return;
+
+    const { data: mem } = await sb
+      .from("chat_members")
+      .select("user_id, role")
+      .eq("chat_id", chatId);
+
+    const list = (mem || []).map((m: any) => ({ id: m.user_id as string, role: m.role as string }));
+    setChatMembers(list);
+    fetchNames(list.map(m => m.id));
+
+    const mine = rows
+      .filter(r => r.sender_id === user.id)
+      .slice(-200)
+      .map(r => r.id);
+    if (!mine.length) return;
+
+    const { data: rec } = await sb
+      .from("message_receipts")
+      .select("message_id, user_id, delivered_at, read_at")
+      .in("message_id", mine);
+
+    const map: ReceiptMap = {};
+    (rec || []).forEach((r: any) => {
+      if (!map[r.message_id]) map[r.message_id] = {};
+      map[r.message_id][r.user_id] = { delivered_at: r.delivered_at, read_at: r.read_at };
+    });
+    setReceipts(prev => ({ ...prev, ...map }));
+  }
+
+  // Status of one of my messages: read by everyone, delivered to everyone, or just sent.
+  function statusFor(m: Message): "sent" | "delivered" | "read" {
+    const others = chatMembers.filter(x => x.id !== user?.id).map(x => x.id);
+    if (!others.length) return "sent";
+    const rec = receipts[m.id] || {};
+    if (others.every(id => rec[id]?.read_at)) return "read";
+    if (others.every(id => rec[id]?.delivered_at || rec[id]?.read_at)) return "delivered";
+    return "sent";
+  }
+
+  async function setMemberRole(memberId: string, role: "admin" | "member") {
+    const sb: any = supabase;
+    if (!sb || !activeId) return;
+
+    const { error } = await sb.rpc("set_member_role", {
+      p_chat_id: activeId,
+      p_user_id: memberId,
+      p_role: role,
+    });
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    await loadGroupMembers(activeId);
+    await loadChatMembersAndReceipts(activeId, messages);
   }
 
   async function leaveCurrentGroup() {
@@ -623,6 +696,21 @@ export default function Home() {
           );
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "message_receipts" },
+        (payload: any) => {
+          const r = payload.new as any;
+          if (!r?.message_id) return;
+          setReceipts(prev => ({
+            ...prev,
+            [r.message_id]: {
+              ...(prev[r.message_id] || {}),
+              [r.user_id]: { delivered_at: r.delivered_at, read_at: r.read_at },
+            },
+          }));
+        }
+      )
       .subscribe();
 
     return () => {
@@ -642,6 +730,7 @@ export default function Home() {
 
     let alive = true;
     setMessages([]);
+    setChatMembers([]);
 
     sb.from("messages")
       .select("*")
@@ -665,6 +754,7 @@ export default function Home() {
           });
 
           fetchNames(rows.map(r => r.sender_id));
+          loadChatMembersAndReceipts(activeId, rows);
         }
       });
 
@@ -1083,6 +1173,8 @@ export default function Home() {
   }
 
   const hasText = draft.trim().length > 0;
+  const myActiveRole = chatMembers.find(x => x.id === user?.id)?.role;
+  const canSend = !active?.onlyAdminsSend || myActiveRole === "admin";
 
   return (
     <main className="app-shell">
@@ -1300,7 +1392,16 @@ export default function Home() {
                         hour: "2-digit",
                         minute: "2-digit",
                       })}
-                      {out ? <Ticks m={m} /> : null}
+                      {out ? (
+                        <button
+                          type="button"
+                          title="Message info"
+                          onClick={e => { e.stopPropagation(); setInfoMsgId(m.id); }}
+                          style={{ background: "none", border: 0, padding: 0, cursor: "pointer", display: "inline-flex" }}
+                        >
+                          <Ticks status={statusFor(m)} />
+                        </button>
+                      ) : null}
                     </small>
                   </div>
                 );
@@ -1383,6 +1484,13 @@ export default function Home() {
                 >
                   <Send size={19} />
                 </button>
+              </div>
+            ) : !canSend ? (
+              <div
+                className="composer"
+                style={{ justifyContent: "center", opacity: 0.7 }}
+              >
+                Only admins can send messages in this group.
               </div>
             ) : (
               <form className="composer" onSubmit={sendMessage}>
@@ -1579,6 +1687,24 @@ export default function Home() {
               }}
             />
 
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                margin: "12px 0",
+                cursor: groupRole === "admin" ? "pointer" : "default",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={groupOnlyAdmins}
+                disabled={groupRole !== "admin"}
+                onChange={e => setGroupOnlyAdmins(e.target.checked)}
+              />
+              Only admins can send messages
+            </label>
+
             {groupRole === "admin" && (
               <button
                 onClick={saveGroupInfo}
@@ -1629,6 +1755,25 @@ export default function Home() {
                       {member.role === "admin" ? "Admin" : "Member"}
                     </small>
                   </div>
+
+                  {member.id !== user.id && groupRole === "admin" && (
+                    <button
+                      onClick={() =>
+                        setMemberRole(member.id, member.role === "admin" ? "member" : "admin")
+                      }
+                      style={{
+                        background: "#e8f0fe",
+                        color: "#1e3a8a",
+                        border: 0,
+                        borderRadius: 8,
+                        padding: "6px 10px",
+                        cursor: "pointer",
+                        marginRight: 6,
+                      }}
+                    >
+                      {member.role === "admin" ? "Demote" : "Make admin"}
+                    </button>
+                  )}
 
                   {member.id !== user.id && groupRole === "admin" && (
                     <button
@@ -1720,6 +1865,46 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {infoMsgId && (() => {
+        const msg = messages.find(x => x.id === infoMsgId);
+        if (!msg) return null;
+        const rec = receipts[msg.id] || {};
+        const others = chatMembers.filter(x => x.id !== user.id);
+        const fmt = (iso?: string | null) =>
+          iso ? new Date(iso).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "—";
+
+        return (
+          <div
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }}
+            onClick={() => setInfoMsgId(null)}
+          >
+            <div
+              style={{ background: "#fff", color: "#111", borderRadius: 14, width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto" }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid #e5e5e5" }}>
+                <strong>Message info</strong>
+                <button onClick={() => setInfoMsgId(null)} style={{ background: "none", border: 0, cursor: "pointer", color: "#111" }}><X size={20} /></button>
+              </div>
+              <div style={{ padding: 16, fontSize: 14 }}>
+                <div style={{ marginBottom: 12, opacity: 0.8 }}>Sent: {fmt(msg.created_at)}</div>
+                {others.length === 0 && <div style={{ opacity: 0.6 }}>No other members yet.</div>}
+                {others.map(o => {
+                  const r = rec[o.id];
+                  return (
+                    <div key={o.id} style={{ padding: "10px 0", borderTop: "1px solid #f0f0f0" }}>
+                      <div style={{ fontWeight: 600 }}>{names[o.id] || "User"}</div>
+                      <div style={{ opacity: 0.75 }}>Delivered: {fmt(r?.delivered_at)}</div>
+                      <div style={{ opacity: 0.75 }}>Read: {fmt(r?.read_at)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {showSettings && (
         <div
@@ -1904,7 +2089,10 @@ export default function Home() {
                 Direct
               </button>
 
-              1,
+              <button
+                onClick={() => setNewMode("group")}
+                style={{
+                  flex: 1,
                   padding: 8,
                   borderRadius: 8,
                   border: "1px solid #ccc",
@@ -2002,7 +2190,7 @@ export default function Home() {
             </div>
 
             {newMode === "group" && (
-              borderTop: "1px solid #e5e5e5" }}>
+              <div style={{ padding: 12, borderTop: "1px solid #e5e5e5" }}>
                 <button
                   onClick={createGroup}
                   style={{
