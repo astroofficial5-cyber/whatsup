@@ -506,7 +506,9 @@ export default function Home() {
       .select("user_id, role")
       .eq("chat_id", chatId);
 
-    const list = (mem || []).map((m: any) => ({ id: m.user_id as string, role: m.role as string }));
+    const list: { id: string; role: string }[] = (mem || []).map(
+      (m: any) => ({ id: m.user_id as string, role: m.role as string })
+    );
     setChatMembers(list);
     fetchNames(list.map(m => m.id));
 
