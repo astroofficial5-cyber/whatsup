@@ -170,6 +170,10 @@ export default function MediaBubble({
   const path = isVoice ? m.audio_path : m.media_path;
   const { url, failed } = useSignedUrl(bucket, path);
 
+  if (!isVoice && !path && (m.type === "image" || m.type === "video" || m.type === "file")) {
+    return <div className="media-loading">🕒 This file was removed to save space</div>;
+  }
+
   const waiting = (label: string) => (
     <div className="media-loading">{failed ? "Couldn't load this file" : label}</div>
   );
