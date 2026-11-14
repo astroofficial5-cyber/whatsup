@@ -207,6 +207,12 @@ export default function Home() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(""), 8000);
+    return () => clearTimeout(t);
+  }, [notice]);
   const [mobileChat, setMobileChat] = useState(false);
 
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");

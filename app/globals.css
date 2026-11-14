@@ -321,7 +321,7 @@ input, textarea { color: var(--ink); }
 .empty-state h2 { font-size: 20px; font-weight: 500; margin: 18px 0 7px; color: var(--ink); }
 .empty-state p { font-size: 12px; }
 .notice { padding: 10px; background: var(--warn-bg); color: var(--warn-ink); border-radius: 8px; font-size: 12px; margin-top: 12px; }
-.notice.floating { position: absolute; bottom: 80px; left: 20px; right: 20px; z-index: 3; cursor: pointer; }
+.notice.floating { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); width: min(440px, calc(100vw - 32px)); z-index: 200; cursor: pointer; margin: 0; padding: 12px 14px; font-size: 13px; box-shadow: var(--shadow); }
 
 /* ---------- Composer ---------- */
 .composer { min-height: 70px; background: var(--panel2); display: flex; align-items: center; gap: 7px; padding: 10px 20px; position: relative; }
