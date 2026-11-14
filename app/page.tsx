@@ -630,6 +630,15 @@ export default function Home() {
     try {
       const url = await uploadPublicImage(sb, `${user.id}/group-${activeId}.jpg`, file, 512);
       setGroupInfoAvatar(url);
+      const { error } = await sb.rpc("update_group_info", {
+        p_chat_id: activeId,
+        p_name: groupInfoName.trim(),
+        p_description: groupInfoDescription.trim(),
+        p_avatar_url: url,
+        p_only_admins_send: groupOnlyAdmins,
+      });
+      if (error) throw error;
+      await loadChats(activeId);
     } catch (err: any) {
       setNotice(friendlyError(err));
     } finally {
@@ -2585,7 +2594,9 @@ export default function Home() {
       {showContact && active && !active.isGroup && (
         <Modal title="Contact info" onClose={() => setShowContact(false)}>
           <div className="avatar-edit">
-            <Avatar label={active.title} url={active.avatarUrl} className="avatar big" />
+            <div onClick={() => active.avatarUrl && setLightbox(active.avatarUrl)}>
+              <Avatar label={active.title} url={active.avatarUrl} className={"avatar big" + (active.avatarUrl ? " zoomable" : "")} />
+            </div>
             <strong style={{ fontSize: 18 }}>{active.title}</strong>
             <small style={{ color: "var(--muted)" }}>
               {active.otherId && online.has(active.otherId)
@@ -2625,11 +2636,13 @@ export default function Home() {
       {groupInfoOpen && active?.isGroup && (
         <Modal title="Group info" onClose={() => setGroupInfoOpen(false)} wide>
           <div className="avatar-edit">
-            <Avatar
-              label={groupInfoName || active.title}
-              url={groupInfoAvatar || active.avatarUrl}
-              className="avatar med"
-            />
+            <div onClick={() => (groupInfoAvatar || active.avatarUrl) && setLightbox((groupInfoAvatar || active.avatarUrl) as string)}>
+              <Avatar
+                label={groupInfoName || active.title}
+                url={groupInfoAvatar || active.avatarUrl}
+                className={"avatar big" + (groupInfoAvatar || active.avatarUrl ? " zoomable" : "")}
+              />
+            </div>
             {groupRole === "admin" && (
               <>
                 <button
