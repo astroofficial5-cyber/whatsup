@@ -446,3 +446,20 @@ textarea.field { resize: vertical; }
 }
 
 .msg-menu.up { top: auto; bottom: 26px; }
+
+/* ---------- Voice messages ---------- */
+.voice { display: flex; align-items: center; gap: 10px; min-width: 230px; max-width: 280px; padding: 2px 2px 0; }
+.voice-play {
+  flex: none; width: 40px; height: 40px; border-radius: 50%; border: 0; cursor: pointer;
+  background: rgba(255, 255, 255, 0.18); color: inherit; display: grid; place-items: center;
+}
+.voice-play:disabled { opacity: 0.5; cursor: default; }
+.voice-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.voice-wave { display: flex; align-items: center; gap: 2px; height: 28px; cursor: pointer; }
+.voice-wave span { flex: 1; min-width: 2px; border-radius: 2px; background: currentColor; opacity: 0.35; }
+.voice-wave span.on { opacity: 1; }
+.voice-meta { font-size: 11px; opacity: 0.8; }
+.voice-speed {
+  flex: none; border: 0; cursor: pointer; border-radius: 12px; padding: 4px 8px; font-size: 11px; font-weight: 700;
+  background: rgba(255, 255, 255, 0.18); color: inherit;
+}
