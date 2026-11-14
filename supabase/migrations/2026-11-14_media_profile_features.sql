@@ -287,3 +287,9 @@ drop policy if exists "media own delete" on storage.objects;
 create policy "media own delete" on storage.objects
 for delete to authenticated
 using (bucket_id = 'media' and owner_id = (select auth.uid())::text);
+
+-- 13. Avatars: upsert (replacing a picture) needs SELECT on the bucket as well --
+drop policy if exists "avatars read" on storage.objects;
+create policy "avatars read" on storage.objects
+for select to authenticated
+using (bucket_id = 'avatars');
